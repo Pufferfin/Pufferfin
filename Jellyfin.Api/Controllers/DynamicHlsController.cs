@@ -1515,6 +1515,7 @@ public class DynamicHlsController : BaseJellyfinApiController
             var currentTranscodingIndex = GetCurrentTranscodingIndex(playlistPath, segmentExtension);
             var segmentGapRequiringTranscodingChange = 24 / state.SegmentLength;
 
+            var isStreamStart = segmentId == -1;
             if (segmentId == -1)
             {
                 _logger.LogDebug("Starting transcoding because fmp4 init file is being requested");
@@ -1558,6 +1559,13 @@ public class DynamicHlsController : BaseJellyfinApiController
 
                     await _transcodeManager.KillTranscodingJobs(streamingRequest.DeviceId, streamingRequest.PlaySessionId, p => false)
                         .ConfigureAwait(false);
+
+                    // PUFFERFIN: a stream that starts replaces any other one of the same device, left running by a
+                    // play started again: two transcodes of one device would share the processor and both stall
+                    if (isStreamStart && !string.IsNullOrEmpty(streamingRequest.DeviceId) && !string.IsNullOrEmpty(streamingRequest.PlaySessionId))
+                    {
+                        await _transcodeManager.KillOtherSessionJobs(streamingRequest.DeviceId, streamingRequest.PlaySessionId).ConfigureAwait(false);
+                    }
 
                     if (currentTranscodingIndex.HasValue)
                     {

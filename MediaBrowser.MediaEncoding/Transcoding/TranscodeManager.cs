@@ -215,6 +215,27 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         }
     }
 
+    /// <inheritdoc />
+    public Task KillOtherSessionJobs(string deviceId, string playSessionId)
+    {
+        List<TranscodingJob> jobs;
+        lock (_activeTranscodingJobs)
+        {
+            jobs = _activeTranscodingJobs
+                .Where(j => string.Equals(deviceId, j.DeviceId, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrEmpty(j.PlaySessionId)
+                    && !string.Equals(playSessionId, j.PlaySessionId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        if (jobs.Count > 0)
+        {
+            _logger.LogInformation("Killing {Count} transcode(s) of another play session of device {DeviceId}", jobs.Count, deviceId);
+        }
+
+        return Task.WhenAll(jobs.Select(job => KillTranscodingJob(job, false, _ => true)));
+    }
+
     private async Task KillTranscodingJob(TranscodingJob job, bool closeLiveStream, Func<string, bool> delete)
     {
         job.DisposeKillTimer();

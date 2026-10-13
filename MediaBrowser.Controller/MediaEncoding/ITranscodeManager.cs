@@ -43,6 +43,15 @@ public interface ITranscodeManager
     public Task KillTranscodingJobs(string deviceId, string? playSessionId, Func<string, bool> deleteFiles);
 
     /// <summary>
+    /// PUFFERFIN: kills the transcodes a device still runs for its other play sessions: one device plays one stream at
+    /// a time, and a play started again must not share the processor with the one it replaces.
+    /// </summary>
+    /// <param name="deviceId">The device id.</param>
+    /// <param name="playSessionId">The play session that starts, kept.</param>
+    /// <returns>A <see cref="Task"/> that completes once the other transcodes are killed.</returns>
+    public Task KillOtherSessionJobs(string deviceId, string playSessionId);
+
+    /// <summary>
     /// Report the transcoding progress to the session manager.
     /// </summary>
     /// <param name="job">The <see cref="TranscodingJob"/> of which the progress will be reported.</param>
