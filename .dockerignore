@@ -9,3 +9,7 @@ deployment/*/dist
 deployment/*/pkg-dist
 deployment/collect-dist/
 ci/
+
+# PUFFERFIN: local build output never goes into the image context (it weighed 10 GB per build in the cache)
+**/bin/
+**/obj/
