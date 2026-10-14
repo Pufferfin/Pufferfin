@@ -146,6 +146,9 @@ namespace MediaBrowser.Controller.SyncPlay.GroupStates
             {
                 _logger.LogError("Unable to set playing queue in group {GroupId}.", context.GroupId.ToString());
 
+                // PUFFERFIN: the one who asked learns why nothing starts: a member of the group cannot open what was chosen
+                context.SendGroupUpdate(session, SyncPlayBroadcastType.CurrentSession, new SyncPlayLibraryAccessDeniedUpdate(context.GroupId, string.Empty), cancellationToken);
+
                 // Ignore request and return to previous state.
                 IGroupState newState = prevState switch
                 {

@@ -54,5 +54,17 @@ namespace MediaBrowser.Model.SyncPlay
         /// </summary>
         /// <value>The date when this DTO has been created.</value>
         public DateTime LastUpdatedAt { get; }
+
+        /// <summary>
+        /// Gets the name of the user who hosts the group. PUFFERFIN: only the host drives what the group watches.
+        /// </summary>
+        /// <value>The name of the host, or <c>null</c> when nobody is left.</value>
+        public string? HostUserName { get; init; }
+
+        /// <summary>
+        /// Gets the device id of the host's session, which tells the host from another device of the same user.
+        /// </summary>
+        /// <value>The device id of the host, or <c>null</c> when nobody is left.</value>
+        public string? HostDeviceId { get; init; }
     }
 }

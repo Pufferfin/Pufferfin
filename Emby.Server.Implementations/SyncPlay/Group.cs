@@ -63,6 +63,11 @@ namespace Emby.Server.Implementations.SyncPlay
         private readonly Dictionary<string, GroupMember> _participants = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
+        /// PUFFERFIN: the session ids of the members, the first to join first: the first one is the host.
+        /// </summary>
+        private readonly List<string> _joinOrder = new();
+
+        /// <summary>
         /// The sessions of the participants, which only carry identifiers.
         /// </summary>
         private readonly Dictionary<string, SessionInfo> _participantSessions = new(StringComparer.OrdinalIgnoreCase);
@@ -188,6 +193,10 @@ namespace Emby.Server.Implementations.SyncPlay
                 });
 
             _participantSessions[session.Id] = session;
+            if (!_joinOrder.Contains(session.Id, StringComparer.OrdinalIgnoreCase))
+            {
+                _joinOrder.Add(session.Id);
+            }
         }
 
         /// <summary>
@@ -198,6 +207,7 @@ namespace Emby.Server.Implementations.SyncPlay
         {
             _participants.Remove(session.Id);
             _participantSessions.Remove(session.Id);
+            _joinOrder.RemoveAll(id => string.Equals(id, session.Id, StringComparison.OrdinalIgnoreCase));
             UpdateGroupWaitDeadline(false);
         }
 
@@ -376,6 +386,13 @@ namespace Emby.Server.Implementations.SyncPlay
             // happens client side. Clients are aware of the server's time and use it to sync.
             _logger.LogInformation("Session {SessionId} requested {RequestType} in group {GroupId} that is {StateType}.", session.Id, request.Action, GroupId.ToString(), _state.Type);
 
+            // PUFFERFIN: only the host drives the group; the members report their buffering and readiness
+            if (!GroupHost.IsAllowed(_joinOrder, session.Id, request.Action))
+            {
+                _logger.LogInformation("Session {SessionId} is not the host of group {GroupId}: {RequestType} ignored.", session.Id, GroupId.ToString(), request.Action);
+                return;
+            }
+
             // Apply requested changes to this group given its current state.
             // Every request has a slightly different outcome depending on the group's state.
             // There are currently four different group states that accomplish different goals:
@@ -395,7 +412,13 @@ namespace Emby.Server.Implementations.SyncPlay
         public GroupInfoDto GetInfo()
         {
             var participants = _participants.Values.Select(session => session.UserName).Distinct().ToList();
-            return new GroupInfoDto(GroupId, GroupName, _state.Type, participants, DateTime.UtcNow);
+            var hostId = GroupHost.GetHost(_joinOrder);
+            var host = hostId is null ? null : _participantSessions.GetValueOrDefault(hostId);
+            return new GroupInfoDto(GroupId, GroupName, _state.Type, participants, DateTime.UtcNow)
+            {
+                HostUserName = host?.UserName,
+                HostDeviceId = host?.DeviceId
+            };
         }
 
         /// <summary>
