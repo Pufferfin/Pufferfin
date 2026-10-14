@@ -1516,6 +1516,41 @@ public class DynamicHlsController : BaseJellyfinApiController
             var segmentGapRequiringTranscodingChange = 24 / state.SegmentLength;
 
             var isStreamStart = segmentId == -1;
+
+            // PUFFERFIN: the init segment asked again while the transcode of this same play is still starting (the
+            // player gave up waiting and retried) waits for that transcode. Starting it over would make a slow
+            // transcode, such as HEVC re-encoded for the browser, start over on every retry and never play.
+            if (segmentId == -1
+                && _transcodeManager.GetTranscodingJob(playlistPath, TranscodingJobType) is { HasExited: false } runningJob
+                && string.Equals(runningJob.PlaySessionId, streamingRequest.PlaySessionId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("The init segment is asked again while the transcode of play session {PlaySessionId} starts: waiting for it", streamingRequest.PlaySessionId);
+                var waitingJob = _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
+                var isServed = false;
+                try
+                {
+                    while (!cancellationToken.IsCancellationRequested && !runningJob.HasExited)
+                    {
+                        if (System.IO.File.Exists(segmentPath) && GetCurrentTranscodingIndex(playlistPath, segmentExtension) is not null)
+                        {
+                            // Ends the request once served, as for any segment
+                            isServed = true;
+                            return GetSegmentResult(state, segmentPath, segmentId, waitingJob);
+                        }
+
+                        await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    // A player that gave up, or a transcode that died, must not leave the request counted
+                    if (!isServed && waitingJob is not null)
+                    {
+                        _transcodeManager.OnTranscodeEndRequest(waitingJob);
+                    }
+                }
+            }
+
             if (segmentId == -1)
             {
                 _logger.LogDebug("Starting transcoding because fmp4 init file is being requested");
