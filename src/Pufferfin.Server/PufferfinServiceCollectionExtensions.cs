@@ -87,6 +87,7 @@ public static class PufferfinServiceCollectionExtensions
         services.AddSingleton<ArrHttpClient>();
         services.AddSingleton<ArrClient>();
         services.AddSingleton<ProwlarrClient>();
+        services.AddSingleton<Requests.Search.VariantReleaseSearch>();
         services.AddSingleton<QBittorrentClient>();
         services.AddSingleton<BazarrClient>();
 

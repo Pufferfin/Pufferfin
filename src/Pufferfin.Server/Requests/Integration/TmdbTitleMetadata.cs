@@ -40,5 +40,6 @@ public sealed class TmdbTitleMetadata : ITitleMetadata
                 details.OriginalLanguage,
                 details.Genres.Select(g => g.Id).ToList(),
                 details.Countries.Select(c => c.Code).ToList(),
-                details.TvdbId);
+                details.TvdbId,
+                details.OriginalTitle);
 }

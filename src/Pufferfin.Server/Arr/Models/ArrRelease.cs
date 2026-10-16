@@ -59,6 +59,28 @@ public sealed class ArrRelease
     /// <summary>Gets or sets the episode numbers Sonarr maps the release to, within <see cref="MappedSeasonNumber"/>.</summary>
     public IList<int>? MappedEpisodeNumbers { get; set; }
 
+    /// <summary>
+    /// Gets or sets the info hash of the torrent, when the indexer gives it.
+    /// </summary>
+    public string? InfoHash { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a pushed release was approved, and grabbed.
+    /// </summary>
+    public bool Approved { get; set; }
+
+    /// <summary>
+    /// Gets or sets the film a pushed or parsed release was mapped to.
+    /// </summary>
+    public int? MappedMovieId { get; set; }
+
+    /// <summary>
+    /// Gets or sets how to hand a release found outside the interactive search to the service; <c>null</c> for one
+    /// the service found itself, grabbed by its guid.
+    /// </summary>
+    [JsonIgnore]
+    public ReleasePush? Push { get; set; }
+
     /// <summary>Gets the season of the release: the one Sonarr maps it to, else the one of its title.</summary>
     [JsonIgnore]
     public int ResolvedSeasonNumber => MappedSeasonNumber ?? SeasonNumber;

@@ -8,6 +8,7 @@ using Pufferfin.Server.Arr;
 using Pufferfin.Server.Arr.Models;
 using Pufferfin.Server.Configuration;
 using Pufferfin.Server.Requests.Integration;
+using Pufferfin.Server.Requests.Search;
 using Pufferfin.Server.Requests.Selection;
 
 namespace Pufferfin.Server.Requests.Workflow;
@@ -23,8 +24,12 @@ namespace Pufferfin.Server.Requests.Workflow;
 /// </remarks>
 public sealed class MovieWorkflow : ArrWorkflowBase
 {
+    // The releases pushed at most for one search when Radarr refuses the first ones.
+    private const int MaxPushes = 3;
+
     private readonly ITitleMetadata _metadata;
     private readonly IMediaLibrary _library;
+    private readonly VariantReleaseSearch? _variantSearch;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MovieWorkflow"/> class.
@@ -34,11 +39,13 @@ public sealed class MovieWorkflow : ArrWorkflowBase
     /// <param name="metadata">The TMDB metadata.</param>
     /// <param name="library">The Jellyfin library.</param>
     /// <param name="logger">The logger.</param>
-    public MovieWorkflow(ArrClient arr, QBittorrentClient qBittorrent, ITitleMetadata metadata, IMediaLibrary library, ILogger<MovieWorkflow> logger)
+    /// <param name="variantSearch">The search of the film under each of its titles, through Prowlarr.</param>
+    public MovieWorkflow(ArrClient arr, QBittorrentClient qBittorrent, ITitleMetadata metadata, IMediaLibrary library, ILogger<MovieWorkflow> logger, VariantReleaseSearch? variantSearch = null)
         : base(PufferfinService.Radarr, arr, qBittorrent, logger)
     {
         _metadata = metadata;
         _library = library;
+        _variantSearch = variantSearch;
     }
 
     /// <inheritdoc />
@@ -82,31 +89,81 @@ public sealed class MovieWorkflow : ArrWorkflowBase
             return request.To(RequestState.Downloading, context.Now);
         }
 
-        var releases = await Arr.SearchMovieReleasesAsync(service, movie.Id, cancellationToken).ConfigureAwait(false);
-        var selection = ReleaseSelector.Select(releases, plan, metadata.OriginalLanguage, context.RejectSubtitledOnly, SelectionScope.Movie);
-        if (selection.Release is not { } release)
-        {
-            return await NoReleaseAsync(request, service, selection.Problem!, context, cancellationToken).ConfigureAwait(false);
-        }
+        // Radarr searches one title with TMDB's year; Pufferfin also searches the French, English and original titles
+        // through Prowlarr, and every release found competes, ranked well seeded first
+        var own = await Arr.SearchMovieReleasesAsync(service, movie.Id, cancellationToken).ConfigureAwait(false);
+        var found = _variantSearch is null
+            ? []
+            : await _variantSearch.FindMovieReleasesAsync(context.Settings, service, movie, [metadata.Title, movie.Title, metadata.OriginalTitle], cancellationToken).ConfigureAwait(false);
+        var releases = ReleaseRanking.Merge(own, found);
 
-        // The search took a while: Radarr may have grabbed the film from its RSS feed meanwhile.
-        var refreshed = await Arr.FindMovieAsync(service, request.TmdbId, cancellationToken).ConfigureAwait(false) ?? movie;
-        if (refreshed.HasFile || (await CoverageAsync(service, movie.Id, cancellationToken).ConfigureAwait(false)).Covered)
+        var pushes = 0;
+        var checkedAgain = false;
+        while (true)
         {
-            return request.To(refreshed.HasFile ? RequestState.Importing : RequestState.Downloading, context.Now);
-        }
+            var selection = ReleaseSelector.Select(releases, plan, metadata.OriginalLanguage, context.RejectSubtitledOnly, SelectionScope.Movie);
+            if (selection.Release is not { } release)
+            {
+                return await NoReleaseAsync(request, service, selection.Problem!, context, cancellationToken).ConfigureAwait(false);
+            }
 
-        await AlignProfileAsync(service, refreshed, selection.Language!, cancellationToken).ConfigureAwait(false);
-        await Arr.GrabReleaseAsync(service, release, cancellationToken).ConfigureAwait(false);
-        Logger.LogInformation("Request {RequestId}: grabbed a release for film {TmdbId} in {Language}", request.Id, request.TmdbId, selection.Language!.Code);
-        return request.To(RequestState.Downloading, context.Now) with
-        {
-            ChosenLanguage = selection.Language.Code,
-            ReleaseTitle = release.Title,
-            GrabbedAt = context.Now,
-            Attempts = request.Attempts + 1,
-            Progress = new RequestProgress(0, null, null)
-        };
+            if (!checkedAgain)
+            {
+                // The search took a while: Radarr may have grabbed the film from its RSS feed meanwhile.
+                checkedAgain = true;
+                var refreshed = await Arr.FindMovieAsync(service, request.TmdbId, cancellationToken).ConfigureAwait(false) ?? movie;
+                if (refreshed.HasFile || (await CoverageAsync(service, movie.Id, cancellationToken).ConfigureAwait(false)).Covered)
+                {
+                    return request.To(refreshed.HasFile ? RequestState.Importing : RequestState.Downloading, context.Now);
+                }
+
+                movie = refreshed;
+            }
+
+            await AlignProfileAsync(service, movie, selection.Language!, cancellationToken).ConfigureAwait(false);
+            if (release.Push is null)
+            {
+                await Arr.GrabReleaseAsync(service, release, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // A release found under another title is pushed: Radarr grabs it only when it approves it for this film
+                var decision = await _variantSearch!.PushAsync(service, release, cancellationToken).ConfigureAwait(false);
+                if (decision is not { Approved: true } || (decision.MappedMovieId is not null && decision.MappedMovieId != movie.Id))
+                {
+                    Logger.LogInformation(
+                        "Request {RequestId}: Radarr refused {Title} found under \"{Query}\": {Reasons}",
+                        request.Id,
+                        release.Push.OriginalTitle,
+                        release.Push.Query,
+                        decision is null ? "no answer" : string.Join("; ", decision.Rejections));
+                    releases = releases.Where(r => !ReferenceEquals(r, release)).ToList();
+                    if (++pushes >= MaxPushes)
+                    {
+                        return await NoReleaseAsync(request, service, new RequestProblem(RequestProblemCode.NoRelease, "Releases were found, but Radarr refused them."), context, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    continue;
+                }
+            }
+
+            Logger.LogInformation(
+                "Request {RequestId}: grabbed {Title} for film {TmdbId} in {Language} ({Seeders} seeders{Source})",
+                request.Id,
+                release.Push?.OriginalTitle ?? release.Title,
+                request.TmdbId,
+                selection.Language!.Code,
+                release.Seeders,
+                release.Push is null ? string.Empty : ", found under \"" + release.Push.Query + "\"");
+            return request.To(RequestState.Downloading, context.Now) with
+            {
+                ChosenLanguage = selection.Language.Code,
+                ReleaseTitle = release.Push?.OriginalTitle ?? release.Title,
+                GrabbedAt = context.Now,
+                Attempts = request.Attempts + 1,
+                Progress = new RequestProgress(0, null, null)
+            };
+        }
     }
 
     /// <inheritdoc />

@@ -14,6 +14,11 @@ public sealed class ArrMovie
     /// <summary>Gets or sets the TMDB id.</summary>
     public int TmdbId { get; set; }
 
+    /// <summary>
+    /// Gets or sets the year Radarr knows the film by: a release is mapped to the film with it.
+    /// </summary>
+    public int Year { get; set; }
+
     /// <summary>Gets or sets a value indicating whether the film has a file on disk.</summary>
     public bool HasFile { get; set; }
 

@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Pufferfin.Server.Arr.Models;
 using Pufferfin.Server.Configuration;
 
 namespace Pufferfin.Server.Arr;
@@ -66,4 +67,19 @@ public sealed class ProwlarrClient
     /// <returns>A task.</returns>
     public Task TestIndexerAsync(ServiceSettings service, JsonObject indexer, CancellationToken cancellationToken)
         => _http.SendAsync(service, HttpMethod.Post, "api/v1/indexer/test", indexer, cancellationToken);
+
+    /// <summary>
+    /// Searches every indexer of Prowlarr by words. Slow: it waits on every indexer.
+    /// </summary>
+    /// <param name="service">The Prowlarr settings.</param>
+    /// <param name="query">The words searched.</param>
+    /// <param name="categories">The Newznab categories: 2000 for films, 5000 for series.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The releases found.</returns>
+    public Task<List<ProwlarrRelease>> SearchAsync(ServiceSettings service, string query, int categories, CancellationToken cancellationToken)
+        => _http.GetAsync<List<ProwlarrRelease>>(
+            service,
+            string.Create(CultureInfo.InvariantCulture, $"api/v1/search?query={System.Uri.EscapeDataString(query)}&type=search&categories={categories}&limit=100"),
+            cancellationToken,
+            isSearch: true);
 }

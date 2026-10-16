@@ -14,6 +14,7 @@ using Pufferfin.Server.Audiobooks;
 using Pufferfin.Server.Configuration;
 using Pufferfin.Server.Requests;
 using Pufferfin.Server.Requests.Integration;
+using Pufferfin.Server.Requests.Search;
 using Pufferfin.Server.Requests.Workflow;
 using Pufferfin.Server.Tests.AutoConfig;
 using Pufferfin.Server.Tests.TestHelpers;
@@ -76,7 +77,13 @@ public sealed class RequestTestKit : IDisposable
         var http = FakeArrServer.CreateHttp(Server);
         Arr = new ArrClient(http);
         var qBittorrent = new QBittorrentClient(Server, NullLogger<QBittorrentClient>.Instance, TimeSpan.FromSeconds(5));
-        Movies = new MovieWorkflow(Arr, qBittorrent, Metadata, Library, Logs.CreateLogger<MovieWorkflow>());
+        Movies = new MovieWorkflow(
+            Arr,
+            qBittorrent,
+            Metadata,
+            Library,
+            Logs.CreateLogger<MovieWorkflow>(),
+            new VariantReleaseSearch(Arr, new ProwlarrClient(http), Logs.CreateLogger<VariantReleaseSearch>()));
         Series = new SeriesWorkflow(Arr, qBittorrent, Metadata, Library, Logs.CreateLogger<SeriesWorkflow>());
     }
 
@@ -100,7 +107,7 @@ public sealed class RequestTestKit : IDisposable
 
     public IEnumerable<JsonObject> Commands => Server.Resource("command").OfType<JsonObject>();
 
-    public static RequestContext Context(string preferred = "fr", bool? rejectSubtitledOnly = null, DateTimeOffset? now = null)
+    public static RequestContext Context(string preferred = "fr", bool? rejectSubtitledOnly = null, DateTimeOffset? now = null, bool withProwlarr = false)
     {
         var changes = new List<(string, object?)>
         {
@@ -110,6 +117,12 @@ public sealed class RequestTestKit : IDisposable
             (SettingKeys.SonarrApiKey, ArrFixtures.SonarrKey),
             (SettingKeys.PreferredAudioLanguages, preferred),
         };
+        if (withProwlarr)
+        {
+            changes.Add((SettingKeys.ProwlarrUrl, "http://prowlarr:9696"));
+            changes.Add((SettingKeys.ProwlarrApiKey, ArrFixtures.ProwlarrKey));
+        }
+
         if (rejectSubtitledOnly is bool reject)
         {
             changes.Add((SettingKeys.RejectSubtitledOnly, reject));

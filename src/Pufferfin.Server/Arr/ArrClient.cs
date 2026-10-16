@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -234,6 +235,37 @@ public sealed class ArrClient
     /// <returns>The releases, in the order Radarr ranks them.</returns>
     public Task<List<ArrRelease>> SearchMovieReleasesAsync(ServiceSettings service, int movieId, CancellationToken cancellationToken)
         => _http.GetAsync<List<ArrRelease>>(service, Path("api/v3/release?movieId=", movieId), cancellationToken, isSearch: true);
+
+    /// <summary>Parses a release title as Radarr or Sonarr would: languages, quality, and the title it maps to. No side effect.</summary>
+    /// <param name="service">The Radarr or Sonarr settings.</param>
+    /// <param name="title">The release title.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The parse result.</returns>
+    public Task<JsonObject> ParseReleaseAsync(ServiceSettings service, string title, CancellationToken cancellationToken)
+        => _http.GetAsync<JsonObject>(service, "api/v3/parse?title=" + Uri.EscapeDataString(title), cancellationToken);
+
+    /// <summary>
+    /// Pushes a release found outside the service. The service maps it to a title and grabs it at once when it
+    /// approves it, as it would a release of its own RSS feed. Never retried.
+    /// </summary>
+    /// <param name="service">The Radarr or Sonarr settings.</param>
+    /// <param name="release">The release to push.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The decision: approved and grabbed, or the reasons it was not.</returns>
+    public async Task<ArrRelease?> PushReleaseAsync(ServiceSettings service, JsonObject release, CancellationToken cancellationToken)
+    {
+        var answer = await _http.SendAsync(service, HttpMethod.Post, "api/v3/release/push", release, cancellationToken).ConfigureAwait(false);
+        var node = JsonNode.Parse(answer);
+        var first = node is JsonArray array ? array.FirstOrDefault() : node;
+        return first?.Deserialize<ArrRelease>(ArrHttpClient.JsonOptions);
+    }
+
+    /// <summary>Gets the quality profiles, as written: their qualities and groups with what each allows.</summary>
+    /// <param name="service">The Radarr or Sonarr settings.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The profiles.</returns>
+    public Task<List<JsonObject>> GetQualityProfilesAsync(ServiceSettings service, CancellationToken cancellationToken)
+        => _http.GetAsync<List<JsonObject>>(service, "api/v3/qualityprofile", cancellationToken);
 
     // Sonarr.
 
