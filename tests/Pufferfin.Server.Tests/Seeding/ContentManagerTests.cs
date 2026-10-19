@@ -22,6 +22,7 @@ namespace Pufferfin.Server.Tests.Seeding;
 public sealed class ContentManagerTests : IDisposable
 {
     private const int DuneTmdbId = 438631;
+    private const int BonesTvdbId = 75682;
     private static readonly Guid _movieItem = Guid.NewGuid();
     private static readonly Guid _admin = Guid.NewGuid();
 
@@ -30,6 +31,7 @@ public sealed class ContentManagerTests : IDisposable
     private readonly string _schedulesPath = Path.Combine(Path.GetTempPath(), "pufferfin-tests", Guid.NewGuid().ToString("N"), "scheduled.json");
     private readonly ScheduledDeletionStore _schedules;
     private readonly ScheduledDeletionRunner _runner;
+    private readonly ContentDeletionService _deletion;
 
     public ContentManagerTests()
     {
@@ -50,6 +52,7 @@ public sealed class ContentManagerTests : IDisposable
             _kit.Configuration,
             _kit.Clock,
             _kit.Logs.CreateLogger<ContentDeletionService>());
+        _deletion = deletion;
         _runner = new ScheduledDeletionRunner(_schedules, deletion, _kit.Clock, _kit.Logs.CreateLogger<ScheduledDeletionRunner>());
     }
 
@@ -255,6 +258,108 @@ public sealed class ContentManagerTests : IDisposable
         // Reading never changes anything
         Assert.DoesNotContain(_kit.Server.Calls, c => c.Method != HttpMethod.Get && c.Path != "auth/login");
     }
+
+    [Fact]
+    public async Task Inventory_ListsTheSeasonsOfASeries_EachWithItsOwnTorrents()
+    {
+        var season1 = Guid.NewGuid();
+        var season2 = Guid.NewGuid();
+        _library.Entries.Add(new LibraryEntry(
+            Guid.NewGuid(),
+            LibraryTitleKind.Series,
+            ContentCategory.Series,
+            "Bones",
+            2005,
+            null,
+            BonesTvdbId,
+            9_000,
+            [],
+            [new LibrarySeason(season2, 2, "Saison 2", 1, 3_000), new LibrarySeason(season1, 1, "Saison 1", 2, 6_000)]));
+        _kit.Server.Add("series", new JsonObject { ["id"] = 7, ["title"] = "Bones", ["tvdbId"] = BonesTvdbId });
+        SeriesGrab("history/since", "PACK1", 1, 1);
+        SeriesGrab("history/since", "COMPLETE", 1, 1);
+        SeriesGrab("history/since", "COMPLETE", 3, 2);
+        _kit.AddTorrent("pack1", category: MediaLayout.SonarrCategory, isPrivate: true, ratio: 0.5, seededDays: 1);
+        _kit.AddTorrent("complete", category: MediaLayout.SonarrCategory, isPrivate: false, ratio: 2, seededDays: 30);
+
+        var inventory = new ContentInventory(_library, _kit.Arr, _kit.QBittorrent, _kit.Links, _schedules, _kit.Configuration, _kit.Clock, _kit.Logs.CreateLogger<ContentInventory>());
+        var bones = Assert.Single((await inventory.ListAsync(CancellationToken.None)).Rows);
+
+        Assert.Equal([1, 2], bones.Seasons.Select(s => s.Number));
+        var first = bones.Seasons[0];
+        Assert.Equal(season1, first.ItemId);
+        Assert.Equal(["complete", "pack1"], first.Torrents.Select(t => t.Hash).Order());
+        Assert.Equal(ContentTracker.Mixed, first.Tracker);
+        Assert.NotNull(first.ProtectedUntil);
+        var second = bones.Seasons[1];
+        Assert.Equal("complete", Assert.Single(second.Torrents).Hash);
+        Assert.Null(second.ProtectedUntil);
+    }
+
+    [Fact]
+    public async Task DeletingASeason_DeletesOnlyItsFiles_AndKeepsEveryTorrent()
+    {
+        var season1 = Guid.NewGuid();
+        _library.Titles[season1] = new LibraryTitle(season1, LibraryTitleKind.Season, "Bones S01", null, BonesTvdbId, 1, null, []);
+        _kit.Server.Add("series", new JsonObject { ["id"] = 7, ["title"] = "Bones", ["tvdbId"] = BonesTvdbId });
+        Episode(1, 1, 1, 11);
+        Episode(2, 1, 2, 12);
+        Episode(3, 2, 1, 13);
+        SeriesGrab("history/series", "PACK1", 1, 1);
+        SeriesGrab("history/series", "PACK1", 2, 1);
+        SeriesGrab("history/series", "COMPLETE", 1, 1);
+        SeriesGrab("history/series", "COMPLETE", 3, 2);
+        _kit.AddTorrent("pack1", category: MediaLayout.SonarrCategory, isPrivate: true, seededDays: 1);
+        _kit.AddTorrent("complete", category: MediaLayout.SonarrCategory, isPrivate: true, seededDays: 1);
+
+        var outcome = await _deletion.DeleteAsync(season1, DeletionMode.Safe, false, _admin, true, CancellationToken.None);
+
+        Assert.Equal(DeletionStatus.Deleted, outcome.Status);
+        var deletedFiles = _kit.Server.Calls.Where(c => c.Method == HttpMethod.Delete).Select(c => c.Path).ToList();
+        Assert.Equal(["episodefile/11", "episodefile/12"], deletedFiles.Order());
+        Assert.Contains(_kit.Server.Calls, c => c.Method == HttpMethod.Put && c.Path.StartsWith("episode/monitor", StringComparison.Ordinal));
+
+        // The season pack keeps seeding until its minimum; the complete pack still holds season 2, so it stays
+        Assert.Empty(_kit.Deletions);
+        Assert.Equal("pack1", Assert.Single(_kit.Store.GetPendingReleases()).Hash);
+        Assert.Contains(outcome.Plan!.Torrents, t => t.Hash == "complete" && t.Action == TorrentAction.KeepShared);
+    }
+
+    [Fact]
+    public void ASeason_CanBeScheduled_AndOnlyThatSeasonMatches()
+    {
+        var season1 = Guid.NewGuid();
+        var title = new LibraryTitle(season1, LibraryTitleKind.Season, "Bones S01", null, BonesTvdbId, 1, null, []);
+        var deletion = ScheduledDeletions.Schedule(title, _admin, Now);
+
+        Assert.Equal(LibraryTitleKind.Season, deletion.Kind);
+        Assert.Null(ScheduledDeletions.Mismatch(deletion, title));
+        Assert.NotNull(ScheduledDeletions.Mismatch(deletion, title with { Kind = LibraryTitleKind.Series }));
+    }
+
+    private void Episode(int id, int season, int number, int fileId)
+        => _kit.Server.Add("episode", new JsonObject
+        {
+            ["id"] = id,
+            ["seriesId"] = 7,
+            ["seasonNumber"] = season,
+            ["episodeNumber"] = number,
+            ["hasFile"] = true,
+            ["episodeFileId"] = fileId
+        });
+
+    private void SeriesGrab(string resource, string downloadId, int episodeId, int season)
+        => _kit.Server.Resource(resource).Add(new JsonObject
+        {
+            ["id"] = Random.Shared.Next(1, 100000),
+            ["eventType"] = "grabbed",
+            ["seriesId"] = 7,
+            ["episodeId"] = episodeId,
+            ["series"] = new JsonObject { ["id"] = 7, ["tvdbId"] = BonesTvdbId },
+            ["episode"] = new JsonObject { ["id"] = episodeId, ["seriesId"] = 7, ["seasonNumber"] = season },
+            ["downloadId"] = downloadId,
+            ["date"] = Now.AddDays(-2)
+        });
 
     private void Grab(string downloadId)
         => _kit.Server.Resource("history/movie").Add(new JsonObject

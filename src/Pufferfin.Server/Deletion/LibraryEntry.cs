@@ -15,6 +15,7 @@ namespace Pufferfin.Server.Deletion;
 /// <param name="TvdbId">The TVDB id of a series, when known.</param>
 /// <param name="SizeBytes">The size of its files.</param>
 /// <param name="FilePaths">The files of an audiobook, matched to their torrents by inode; empty otherwise.</param>
+/// <param name="Seasons">The seasons of a series on disk; none for another kind.</param>
 public sealed record LibraryEntry(
     Guid ItemId,
     LibraryTitleKind Kind,
@@ -24,4 +25,5 @@ public sealed record LibraryEntry(
     int? TmdbId,
     int? TvdbId,
     long SizeBytes,
-    IReadOnlyList<string> FilePaths);
+    IReadOnlyList<string> FilePaths,
+    IReadOnlyList<LibrarySeason>? Seasons = null);

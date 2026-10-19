@@ -30,4 +30,10 @@ public sealed record ContentRow(
     double? Ratio,
     ContentTracker Tracker,
     DateTimeOffset? ProtectedUntil,
-    DateTimeOffset? DeletionDueAt);
+    DateTimeOffset? DeletionDueAt)
+{
+    /// <summary>
+    /// Gets the seasons of a series, each deleted on its own; none for another kind.
+    /// </summary>
+    public IReadOnlyList<ContentSeason> Seasons { get; init; } = [];
+}

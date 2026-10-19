@@ -59,7 +59,7 @@ public class PufferfinContentController : BaseJellyfinApiController
     /// Deletes a title now, with the safe deletion: its files and its public torrents go now, its private torrents
     /// keep seeding until their minimum, then the hourly task removes them with their files.
     /// </summary>
-    /// <param name="itemId">The Jellyfin item id of a film, a series or an audiobook.</param>
+    /// <param name="itemId">The Jellyfin item id of a film, a series, a season or an audiobook.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <response code="200">Title deleted.</response>
     /// <response code="404">No such title.</response>
@@ -93,18 +93,18 @@ public class PufferfinContentController : BaseJellyfinApiController
     /// <summary>
     /// Schedules the safe deletion of a title seven days from now. A title already scheduled keeps its date.
     /// </summary>
-    /// <param name="itemId">The Jellyfin item id of a film, a series or an audiobook.</param>
+    /// <param name="itemId">The Jellyfin item id of a film, a series, a season or an audiobook.</param>
     /// <response code="200">Deletion scheduled.</response>
-    /// <response code="404">No such film, series or audiobook.</response>
+    /// <response code="404">No such film, series, season or audiobook.</response>
     /// <returns>The scheduled deletion.</returns>
     [HttpPost("{itemId}/Schedule")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     public ActionResult<ScheduledDeletion> SchedulePufferfinContentDeletion([FromRoute, Required] Guid itemId)
     {
-        if (_library.Find(itemId, null) is not { Kind: LibraryTitleKind.Movie or LibraryTitleKind.Series or LibraryTitleKind.Audiobook } title)
+        if (_library.Find(itemId, null) is not { Kind: LibraryTitleKind.Movie or LibraryTitleKind.Series or LibraryTitleKind.Season or LibraryTitleKind.Audiobook } title)
         {
-            return Problem(detail: "No such film, series or audiobook in the library.", statusCode: StatusCodes.Status404NotFound, title: nameof(DeletionStatus.NotFound));
+            return Problem(detail: "No such film, series, season or audiobook in the library.", statusCode: StatusCodes.Status404NotFound, title: nameof(DeletionStatus.NotFound));
         }
 
         return _schedules.Add(ScheduledDeletions.Schedule(title, User.GetUserId(), _timeProvider.GetUtcNow()));

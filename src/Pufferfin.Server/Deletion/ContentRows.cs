@@ -74,6 +74,32 @@ public static class ContentRows
     }
 
     /// <summary>
+    /// Builds the line of a season.
+    /// </summary>
+    /// <param name="season">The season.</param>
+    /// <param name="torrents">The torrents its episodes came from.</param>
+    /// <param name="deletionDueAt">When its scheduled deletion is due, if one waits.</param>
+    /// <returns>The line.</returns>
+    public static ContentSeason BuildSeason(LibrarySeason season, IReadOnlyList<ContentTorrent> torrents, DateTimeOffset? deletionDueAt)
+    {
+        ArgumentNullException.ThrowIfNull(season);
+        ArgumentNullException.ThrowIfNull(torrents);
+
+        var ordered = torrents.OrderBy(t => t.AddedAt ?? DateTimeOffset.MaxValue).ToList();
+        return new ContentSeason(
+            season.ItemId,
+            season.Number,
+            season.Title,
+            season.EpisodeCount,
+            season.SizeBytes,
+            ordered,
+            Ratio(ordered),
+            Tracker(ordered),
+            ordered.Select(t => t.ProtectedUntil).Where(d => d is not null).Max(),
+            deletionDueAt);
+    }
+
+    /// <summary>
     /// The share ratio of several torrents, each weighted by its size, so a big season counts more than a small extra.
     /// </summary>
     /// <param name="torrents">The torrents.</param>

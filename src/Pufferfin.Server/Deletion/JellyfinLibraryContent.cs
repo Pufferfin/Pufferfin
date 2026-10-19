@@ -119,6 +119,7 @@ public sealed class JellyfinLibraryContent : ILibraryContent
                         []));
                     break;
                 case Series series:
+                    var episodes = series.GetRecursiveChildren(i => i is Episode && !i.IsVirtualItem);
                     entries.Add(new LibraryEntry(
                         series.Id,
                         LibraryTitleKind.Series,
@@ -127,8 +128,9 @@ public sealed class JellyfinLibraryContent : ILibraryContent
                         series.ProductionYear,
                         Id(series, MetadataProvider.Tmdb),
                         Id(series, MetadataProvider.Tvdb),
-                        SizeOf(series.GetRecursiveChildren(i => i is Episode && !i.IsVirtualItem)),
-                        []));
+                        SizeOf(episodes),
+                        [],
+                        SeasonsOf(episodes)));
                     break;
                 default:
                     break;
@@ -183,6 +185,21 @@ public sealed class JellyfinLibraryContent : ILibraryContent
         {
             _libraryManager.DeleteItem(item, new DeleteOptions { DeleteFileLocation = true }, notifyParentItem: true);
         }
+    }
+
+    // The seasons that have episodes on disk, each found the way a deletion finds it
+    private static List<LibrarySeason> SeasonsOf(IEnumerable<BaseItem> episodes)
+    {
+        var seasons = new List<LibrarySeason>();
+        foreach (var group in episodes.OfType<Episode>().Where(e => e.Season is not null).GroupBy(e => e.Season!.Id))
+        {
+            if (group.First().Season is { IndexNumber: int number } season)
+            {
+                seasons.Add(new LibrarySeason(season.Id, number, season.Name, group.Count(), SizeOf(group)));
+            }
+        }
+
+        return seasons;
     }
 
     private static ContentCategory CategoryOf(string? path, LibraryTitleKind kind)
